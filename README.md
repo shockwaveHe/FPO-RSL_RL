@@ -2,4 +2,6 @@ This is the implementation of Flow Matching Policy Gradients [https://arxiv.org/
 
 This implementation is originally for Toddlerbot project [https://toddlerbot.github.io/].
 
+The implementation is based on rsl-rl v2.3.3.
+
 Author: Yao He
