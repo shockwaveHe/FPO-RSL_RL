@@ -26,9 +26,6 @@ class FeedForwardNN(nn.Module):
                 """
                 super(FeedForwardNN, self).__init__()
 
-                # self.layer1 = nn.Linear(in_dim, 64)
-                # self.layer2 = nn.Linear(64, 64)
-                # self.layer3 = nn.Linear(64, out_dim)
 
                 self.layer1 = nn.Linear(in_dim, 512)
                 self.layer2 = nn.Linear(512, 256)
@@ -52,7 +49,5 @@ class FeedForwardNN(nn.Module):
                 activation2 = F.relu(self.layer2(activation1))
                 activation3 = F.relu(self.layer3(activation2))
                 output = self.layer4(activation3)
-                # output = self.layer3(activation2)
-                # print(obs, output)
 
                 return output

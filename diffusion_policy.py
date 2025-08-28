@@ -24,8 +24,6 @@ class DiffusionPolicy(FeedForwardNN):
         self.out_dim = out_dim
         # store whether to use fixed noise during inference
         self.fixed_noise_inference = fixed_noise_inference
-        # pre-sample a single noise vector for inference
-        # self.init_noise = torch.randn(1, 2, device=self.device)
         self.init_noise = torch.randn(1, self.out_dim, device=self.device)
         # num sampling step
         self.num_steps = num_steps
@@ -108,15 +106,6 @@ class DiffusionPolicy(FeedForwardNN):
         x_t_path = [x_t.detach().clone()]
 
         # TODO: change to better sampler implemented for mujoco playground
-        # for step in range(self.num_steps):
-        #     t_val = step * dt
-        #     t_tensor = torch.full((1,1), t_val, device=self.device)
-        #     import pdb; pdb.set_trace()
-        #     inp = torch.cat([state_norm, x_t, t_tensor], dim=1)
-        #     velocity = self(inp)
-        #     x_t = x_t + dt * velocity
-        #     x_t_path.append(x_t.detach().clone())
-
         # ---- time stepping (Euler) ----
         t_vals = torch.arange(self.num_steps, device=self.device) * dt  # (S,)
         for t in t_vals:
@@ -129,21 +118,12 @@ class DiffusionPolicy(FeedForwardNN):
         x_t_path = torch.stack(x_t_path, dim=1)
 
         # Mine samples for training
-        # in the original implementation, the operation is only for 1 batch and N samples
-        # now we change to B batch and N samples
-        # in fpo_original.py, the data is grouped to B batch and flatten. We do the grouping here
-        # eps_sample = torch.randn(num_train_samples, self.out_dim, device=self.device)  # [N, D_a]
         eps_sample = torch.randn(B, num_train_samples, self.out_dim, device=self.device)  # [B, N, D_a]
 
-        # t = torch.rand(num_train_samples, 1, device=self.device)  # [N, 1]
-        # t = t.unsqueeze(1).expand(num_train_samples, B, 1).reshape(num_train_samples * B, 1)  # [N*B, 1]
         t = torch.rand(B, num_train_samples, 1, device=self.device)  # [B, N, 1]
 
-        # x1 = x_t.repeat(num_train_samples, 1).detach()  # [N, D_a]
-        # x1 = x_t.unsqueeze(0).expand(num_train_samples, -1, -1).reshape(num_train_samples * B, -1).detach()  # [N*B, D_a]
         x1 = x_t.unsqueeze(1).expand(B, num_train_samples, self.out_dim) # [B, N, D_a]
-        # state_tile = state_norm.expand(num_train_samples, -1)  # [N, D_s]
-        # state_tile = state_norm.unsqueeze(0).expand(num_train_samples, -1, -1).reshape(num_train_samples * B, -1)  # [N*B, D_s]
+
         state_tile = state_norm.unsqueeze(1).expand(-1, num_train_samples, -1)  # [B, N, D_s]
         
         initial_cfm_loss = self.compute_cfm_loss(state_tile, x1, eps_sample, t)  # [B, N]
@@ -182,30 +162,3 @@ class DiffusionPolicy(FeedForwardNN):
         velocity_pred = self(inp)  # [B*N, D_a]
         eps = eps.reshape(B*N, -1)
         return F.mse_loss(velocity_pred, x1 - eps, reduction='none').mean(dim=1).reshape(B, N)  # [B, N]
-
-    # def compute_cfm_loss(self, state_norm: torch.Tensor,
-    #                      x1: torch.Tensor,
-    #                      eps: torch.Tensor,
-    #                      t: torch.Tensor) -> torch.Tensor:
-    #     """
-    #     Compute conditional flow matching loss.
-
-    #     Args:
-    #         state_norm: [B, D_s] normalized input state
-    #         x1: [B, D_a] final denoised action
-    #         eps: [B, D_a] sampled noise
-    #         t: [B, 1] time steps
-
-    #     Returns:
-    #         loss: [B] per-sample loss
-    #     """
-    #     B, D_a = eps.shape
-    #     assert x1.shape == (B, D_a), f"x1 must be [B, D_a], got {x1.shape}"
-    #     assert state_norm.shape[0] == B, f"state_norm must have batch size {B}, got {state_norm.shape[0]}"
-    #     assert t.shape == (B, 1), f"t must be [B, 1], got {t.shape}"
-
-    #     x_t = (1 - t) * eps + t * x1  # [B, D_a]
-    #     inp = torch.cat([state_norm, x_t, t], dim=1)  # [B, D_s + D_a + 1]
-    #     velocity_pred = self(inp)  # [B, D_a]
-
-    #     return F.mse_loss(velocity_pred, x1 - eps, reduction='none').mean(dim=1)  # [B]

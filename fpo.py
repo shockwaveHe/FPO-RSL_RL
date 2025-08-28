@@ -64,12 +64,6 @@ class FPO:
         self.policy = policy
         self.policy.to(self.device)
 
-        # create optimizer
-        # split optimizer
-        # self.actor_optim = Adam(self.policy.actor.parameters(), learning_rate)
-        # self.critic_optim = Adam(self.policy.critic.parameters(), learning_rate)
-        # use combined one
-
         self.optimizer = Adam(self.policy.parameters(), learning_rate)
         self.scheduler_type = kwargs.get("scheduler_type", None)
         self.num_training_steps = kwargs["num_training_steps"]
@@ -122,11 +116,7 @@ class FPO:
         self.positive_advantage = kwargs.get("positive_advantage", False)
 
         print(f"positive_advantage = {self.positive_advantage}")
-        # self.t_so_far = 0
-        # self.i_so_far = 0
 
-        # for rsl_rl compatible, no use
-        # self.value_loss_coef = 1.0
         self.rnd = None
 
     def init_storage(
@@ -138,7 +128,6 @@ class FPO:
         critic_obs_shape,
         actions_shape,
     ):
-        # rnd_state_shape = None
         # create rollout storage
         # refer to DiffusionPolicy
         eps_shape = (
@@ -226,10 +215,6 @@ class FPO:
         else:
             mean_symmetry_loss = None
 
-        # generator for mini batches
-        # if self.policy.is_recurrent:
-        #     generator = self.storage.recurrent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        # else:
         generator = self.storage.mini_batch_generator(
             self.num_mini_batches, self.num_learning_epochs
         )
@@ -296,87 +281,38 @@ class FPO:
                 initial_cfm_losses_batch = initial_cfm_losses_batch.repeat(num_aug, 1)
 
             # Recompute actions log prob and entropy for current batch of transitions
-            # Note: we need to do this because we updated the policy with the new parameters
-            # -- actor
-            # self.policy.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
-            # actions_log_prob_batch = self.policy.get_actions_log_prob(actions_batch)
-            # # -- critic
+
             value_batch = self.policy.evaluate(
                 critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1]
             )
 
-            # # -- entropy
-            # # we only keep the entropy of the first augmentation (the original one)
-            # mu_batch = self.policy.action_mean[:original_batch_size]
-            # sigma_batch = self.policy.action_std[:original_batch_size]
-            # entropy_batch = self.policy.entropy[:original_batch_size]
+            # -- entropy
+
             entropy_batch = torch.tensor(0.0).to(
                 self.device
             )  # or pull from actor if defined
 
-            # # KL
-            # if self.desired_kl is not None and self.schedule == "adaptive":
-            #     with torch.inference_mode():
-            #         kl = torch.sum(
-            #             torch.log(sigma_batch / old_sigma_batch + 1.0e-5)
-            #             + (torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch))
-            #             / (2.0 * torch.square(sigma_batch))
-            #             - 0.5,
-            #             axis=-1,
-            #         )
-            #         kl_mean = torch.mean(kl)
-
-            #         # Reduce the KL divergence across all GPUs
-            #         if self.is_multi_gpu:
-            #             torch.distributed.all_reduce(kl_mean, op=torch.distributed.ReduceOp.SUM)
-            #             kl_mean /= self.gpu_world_size
-
-            #         # Update the learning rate
-            #         # Perform this adaptation only on the main process
-            #         # TODO: Is this needed? If KL-divergence is the "same" across all GPUs,
-            #         #       then the learning rate should be the same across all GPUs.
-            #         if self.gpu_global_rank == 0:
-            #             if kl_mean > self.desired_kl * 2.0:
-            #                 self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-            #             elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
-            #                 self.learning_rate = min(1e-2, self.learning_rate * 1.5)
-
-            #         # Update the learning rate for all GPUs
-            #         if self.is_multi_gpu:
-            #             lr_tensor = torch.tensor(self.learning_rate, device=self.device)
-            #             torch.distributed.broadcast(lr_tensor, src=0)
-            #             self.learning_rate = lr_tensor.item()
-
-            #         # Update the learning rate for all parameter groups
-            #         for param_group in self.optimizer.param_groups:
-            #             param_group["lr"] = self.learning_rate
 
             B, N, D = loss_eps_batch.shape  # batch size, num train samples, action dim
             expanded_obs = obs_batch.unsqueeze(1).expand(B, N, -1)  # [B, N, D_s]
             expanded_acts = actions_batch.unsqueeze(1).expand(B, N, -1)  # [B, N, D_a]
-            # flat_eps = loss_eps_batch                                         # [B, N, D_a]
-            # flat_t = loss_ts_batch                                            # [B, N, 1]
-            # flat_init_loss = initial_cfm_losses_batch                         # [B, N]
-            # we do the flat inside compute_cfm_loss, unlike the original fpo implementation
+
             # cfm_loss
             cfm_loss = self.policy.actor.compute_cfm_loss(
                 expanded_obs, expanded_acts, loss_eps_batch, loss_ts_batch
             )
             # Surrogate loss
-            # cfm_difference = flat_init_loss - cfm_loss
             cfm_difference = initial_cfm_losses_batch - cfm_loss
-            # cfm_difference = cfm_difference.view(B, N)
+
             cfm_difference = torch.clamp(
                 cfm_difference, -self.cfm_diff_clip, self.cfm_diff_clip
             ) 
-            # ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))
+
 
             rho_s = torch.exp(torch.clamp(cfm_difference.mean(dim=1), -self.cfm_diff_clip, self.cfm_diff_clip))
-            # surrogate = -torch.squeeze(advantages_batch) * ratio
+
             surrogate = torch.squeeze(advantages_batch) * rho_s
-            # surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(
-            #     ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
-            # )
+
             surrogate_clipped = torch.squeeze(advantages_batch) * torch.clamp(
                 rho_s, 1.0 - self.clip_param, 1.0 + self.clip_param
             )
@@ -386,79 +322,9 @@ class FPO:
             # surrogate_loss -= self.entropy_coef * entropy_batch.mean()
 
             # # Value function loss
-            # if self.use_clipped_value_loss:
-            #     value_clipped = target_values_batch + (value_batch - target_values_batch).clamp(
-            #         -self.clip_param, self.clip_param
-            #     )
-            #     value_losses = (value_batch - returns_batch).pow(2)
-            #     value_losses_clipped = (value_clipped - returns_batch).pow(2)
-            #     value_loss = torch.max(value_losses, value_losses_clipped).mean()
-            # else:
-            #     value_loss = (returns_batch - value_batch).pow(2).mean()
             value_loss = nn.MSELoss()(value_batch, returns_batch)
 
-            # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
-
-            # # Symmetry loss
-            # if self.symmetry:
-            #     # obtain the symmetric actions
-            #     # if we did augmentation before then we don't need to augment again
-            #     if not self.symmetry["use_data_augmentation"]:
-            #         data_augmentation_func = self.symmetry["data_augmentation_func"]
-            #         obs_batch, _ = data_augmentation_func(
-            #             obs=obs_batch, actions=None, env=self.symmetry["_env"], obs_type="policy"
-            #         )
-            #         # compute number of augmentations per sample
-            #         num_aug = int(obs_batch.shape[0] / original_batch_size)
-
-            #     # actions predicted by the actor for symmetrically-augmented observations
-            #     mean_actions_batch = self.policy.act_inference(obs_batch.detach().clone())
-
-            #     # compute the symmetrically augmented actions
-            #     # note: we are assuming the first augmentation is the original one.
-            #     #   We do not use the action_batch from earlier since that action was sampled from the distribution.
-            #     #   However, the symmetry loss is computed using the mean of the distribution.
-            #     action_mean_orig = mean_actions_batch[:original_batch_size]
-            #     _, actions_mean_symm_batch = data_augmentation_func(
-            #         obs=None, actions=action_mean_orig, env=self.symmetry["_env"], obs_type="policy"
-            #     )
-
-            #     # compute the loss (we skip the first augmentation as it is the original one)
-            #     mse_loss = torch.nn.MSELoss()
-            #     symmetry_loss = mse_loss(
-            #         mean_actions_batch[original_batch_size:], actions_mean_symm_batch.detach()[original_batch_size:]
-            #     )
-            #     # add the loss to the total loss
-            #     if self.symmetry["use_mirror_loss"]:
-            #         loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss
-            #     else:
-            #         symmetry_loss = symmetry_loss.detach()
-
-            # Compute the gradients
             # -- For FPO
-            # split optim version
-            # self.optimizer.zero_grad()
-            # self.actor_optim.zero_grad()
-            # surrogate_loss.backward(retain_graph=True)
-
-            # # Collect gradients from all GPUs
-            # if self.is_multi_gpu:
-            #     self.reduce_parameters()
-
-            # # Apply the gradients
-            # # -- For FPO
-            # # nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            # nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
-            # # self.optimizer.step()
-            # self.actor_optim.step()
-
-            # self.critic_optim.zero_grad()
-            # value_loss.backward()
-            # nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
-            # self.critic_optim.step()
-
-            # -- For FPO
-            # one optimizer
             loss = (
                 surrogate_loss
                 + value_loss * self.value_loss_coef
