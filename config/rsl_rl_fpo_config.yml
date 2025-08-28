@@ -1,0 +1,56 @@
+# -- load and resuming
+resume: false
+load_run: -1  # -1 means load latest run
+resume_path: null  # updated from load_run and checkpoint
+checkpoint: -1  # -1 means load latest checkpoint
+
+runner_class_name: OnPolicyRunner
+
+algorithm:
+    class_name: FPO
+    # -- value function
+    value_loss_coef: 0.25
+    use_clipped_value_loss: true
+    # -- surrogate loss
+    desired_kl: 0.01
+    # -- training
+    schedule: adaptive  # adaptive, fixed
+
+    # -- Random Network Distillation
+    # rnd_cfg:
+    #     weight: 0.0  # initial weight of the RND reward
+
+    #     # note: This is a dictionary with a required key called "mode".
+    #     #   Please check the RND module for more information.
+    #     weight_schedule: null
+
+    #     reward_normalization: false  # whether to normalize RND reward
+    #     state_normalization: true  # whether to normalize RND state observations
+
+    #     # -- Learning parameters
+    #     learning_rate: 0.001  # learning rate for RND
+
+    #     # -- Network parameters
+    #     # note: if -1, then the network will use dimensions of the observation
+    #     num_outputs: 1  # number of outputs of RND network
+    #     predictor_hidden_dims: [-1] # hidden dimensions of predictor network
+    #     target_hidden_dims: [-1]  # hidden dimensions of target network
+
+    # -- Symmetry Augmentation
+    symmetry_cfg:
+        use_data_augmentation: false  # this adds symmetric trajectories to the batch
+        use_mirror_loss: true  # this adds symmetry loss term to the loss function
+        # coefficient for symmetry loss term
+        # if 0, then no symmetry loss is used
+        mirror_loss_coeff: 1.0
+        # string containing the module and function name to import.
+        # Example: "legged_gym.envs.locomotion.anymal_c.symmetry:get_symmetric_states"
+        #
+        # .. code-block:: python
+        #
+        #     @torch.no_grad()
+        #     def get_symmetric_states(
+        #        obs: Optional[torch.Tensor] = None, actions: Optional[torch.Tensor] = None, cfg: "BaseEnvCfg" = None, is_critic: bool = False,
+        #     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        #
+        data_augmentation_func:
